@@ -2,20 +2,27 @@ import {
   ChevronLeft,
   ChevronRight,
   Database,
+  Info,
+  LayoutTemplate,
   Shield,
   SlidersHorizontal,
   Sparkles,
   User,
   Users,
+  Wrench,
 } from "lucide-react";
 import { useState, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
+import * as m from "motion/react-m";
+import { SystemInfoDialog } from "@/components/SystemInfoDialog";
 import { Button } from "@/components/ui/button";
-import type { ShortcutSettings } from "@/lib/app-helpers";
+import type { EditorContentAlignment, ShortcutSettings } from "@/lib/app-helpers";
 import { WORKSPACE_PAGE_TITLE_CLASSNAME } from "@/lib/workspace-ui";
 import { cn } from "@/lib/utils";
 import { AdvancedPlayCard } from "./settings/AdvancedPlayCard";
+import { AccountInfoCard } from "./settings/AccountInfoCard";
 import { DataExportCard } from "./settings/DataExportCard";
+import { DesktopLocalDataCard } from "./settings/DesktopLocalDataCard";
 import { LoginDevicesCard } from "./settings/LoginDevicesCard";
 import { EvernoteImportGuideCard } from "./settings/EvernoteImportGuideCard";
 import { FeedbackLink } from "./settings/FeedbackLink";
@@ -23,22 +30,39 @@ import { McpConfigCard } from "./settings/McpConfigCard";
 import { PreferenceCard } from "./settings/PreferenceCard";
 import { PasswordCard } from "./settings/PasswordCard";
 import { SessionCard } from "./settings/SessionCard";
-import { SystemInfoCard } from "./settings/SystemInfoCard";
 import { UserManagementCard } from "./settings/UserManagementCard";
+import { ObjectStorageCard } from "./settings/ObjectStorageCard";
+import { AiModelCard } from "./settings/AiModelCard";
+import { AiPromptsCard } from "./settings/AiPromptsCard";
+import { AiGenerationPreferenceCard } from "./settings/AiGenerationPreferenceCard";
+import { AiTagSuggestionPromptCard } from "./settings/AiTagSuggestionPromptCard";
 import { ThemeToggle } from "./ThemeToggle";
+import type { AuthUser } from "@edgeever/shared";
+import { contentEnterMotion } from "@/lib/motion";
+import type { EdgeEverPluginHost } from "@/lib/plugins/plugin-host";
+import { PluginToolbarMenu } from "./plugins/PluginToolbarMenu";
 
 interface SettingsPaneProps {
   onClose: () => void;
+  onOpenTemplates: () => void;
+  onOpenAiPrompts: () => void;
   imageCompressionEnabled: boolean;
   onImageCompressionChange: (enabled: boolean) => void;
+  syncIntervalMs: number | null;
+  onSyncIntervalChange: (intervalMs: number | null) => void;
   shortcutSettings: ShortcutSettings;
   onShortcutSettingsChange: (settings: ShortcutSettings) => void;
+  editorContentAlignment: EditorContentAlignment;
+  onEditorContentAlignmentChange: (alignment: EditorContentAlignment) => void;
   onLogout: () => void;
   isLoggingOut: boolean;
   authRequired: boolean;
   demoMode: boolean;
   isOwner: boolean;
-  onShowGuide?: () => void;
+  user: AuthUser | null;
+  refreshWorkspaceAfterImport: () => Promise<void>;
+  pluginHost: EdgeEverPluginHost;
+  onOpenPluginMarketplace: () => void;
 }
 
 // Slate and brand color variables already switch values with the root theme.
@@ -49,7 +73,7 @@ const SettingsGroup = ({ children }: { children: ReactNode }) => (
   </div>
 );
 
-type TabKey = "general" | "users" | "data" | "ai" | "account";
+type TabKey = "general" | "users" | "data" | "ai" | "advanced" | "account";
 
 interface TabItem {
   key: TabKey;
@@ -63,26 +87,55 @@ interface TabItem {
 
 export const SettingsPane = ({
   onClose,
+  onOpenTemplates,
+  onOpenAiPrompts,
   imageCompressionEnabled,
   onImageCompressionChange,
+  syncIntervalMs,
+  onSyncIntervalChange,
   shortcutSettings,
   onShortcutSettingsChange,
+  editorContentAlignment,
+  onEditorContentAlignmentChange,
   onLogout,
   isLoggingOut,
   authRequired,
   demoMode,
   isOwner,
-  onShowGuide,
+  user,
+  refreshWorkspaceAfterImport,
+  pluginHost,
+  onOpenPluginMarketplace,
 }: SettingsPaneProps) => {
   const { t } = useTranslation();
   const [activeTab, setActiveTab] = useState<TabKey>("general");
   const [activeMobileTab, setActiveMobileTab] = useState<TabKey | null>(null);
+  const [systemInfoOpen, setSystemInfoOpen] = useState(false);
+  const canClearLocalData = Boolean(window.edgeeverDesktop?.canClearLocalData);
 
   const tabItems: TabItem[] = [
     {
       key: "general",
       label: t("settings.tabs.general"),
       icon: SlidersHorizontal,
+      colorClass: "text-emerald-700",
+      bgColorClass: "bg-emerald-50/80",
+      hoverColorClass: "hover:bg-emerald-50/40",
+      iconColorClass: "text-emerald-600",
+    },
+    {
+      key: "ai",
+      label: t("settings.tabs.ai"),
+      icon: Sparkles,
+      colorClass: "text-emerald-700",
+      bgColorClass: "bg-emerald-50/80",
+      hoverColorClass: "hover:bg-emerald-50/40",
+      iconColorClass: "text-emerald-600",
+    },
+    {
+      key: "data",
+      label: t("settings.tabs.data"),
+      icon: Database,
       colorClass: "text-emerald-700",
       bgColorClass: "bg-emerald-50/80",
       hoverColorClass: "hover:bg-emerald-50/40",
@@ -102,18 +155,9 @@ export const SettingsPane = ({
         ]
       : []),
     {
-      key: "data",
-      label: t("settings.tabs.data"),
-      icon: Database,
-      colorClass: "text-emerald-700",
-      bgColorClass: "bg-emerald-50/80",
-      hoverColorClass: "hover:bg-emerald-50/40",
-      iconColorClass: "text-emerald-600",
-    },
-    {
-      key: "ai",
-      label: t("settings.tabs.ai"),
-      icon: Sparkles,
+      key: "advanced",
+      label: t("settings.tabs.advanced"),
+      icon: Wrench,
       colorClass: "text-emerald-700",
       bgColorClass: "bg-emerald-50/80",
       hoverColorClass: "hover:bg-emerald-50/40",
@@ -170,10 +214,13 @@ export const SettingsPane = ({
             <PreferenceCard
               imageCompressionEnabled={imageCompressionEnabled}
               onImageCompressionChange={onImageCompressionChange}
+              syncIntervalMs={syncIntervalMs}
+              onSyncIntervalChange={onSyncIntervalChange}
               shortcutSettings={shortcutSettings}
               onShortcutSettingsChange={onShortcutSettingsChange}
+              editorContentAlignment={editorContentAlignment}
+              onEditorContentAlignmentChange={onEditorContentAlignmentChange}
             />
-            <SystemInfoCard />
             <FeedbackLink className="hidden lg:flex" />
           </SettingsGroup>
         );
@@ -186,20 +233,32 @@ export const SettingsPane = ({
       case "data":
         return (
           <SettingsGroup>
-            <DataExportCard />
-            <EvernoteImportGuideCard onShowGuide={onShowGuide} />
+            <DataExportCard refreshWorkspaceAfterImport={refreshWorkspaceAfterImport} />
+            <EvernoteImportGuideCard />
           </SettingsGroup>
         );
       case "ai":
         return (
           <SettingsGroup>
-            <AdvancedPlayCard />
+            <AiModelCard />
+            <AiPromptsCard onOpenLibrary={onOpenAiPrompts} />
             <McpConfigCard />
+            <AdvancedPlayCard />
+          </SettingsGroup>
+        );
+      case "advanced":
+        return (
+          <SettingsGroup>
+            <AiGenerationPreferenceCard />
+            <AiTagSuggestionPromptCard />
+            {isOwner ? <ObjectStorageCard demoMode={demoMode} /> : null}
+            {canClearLocalData ? <DesktopLocalDataCard /> : null}
           </SettingsGroup>
         );
       case "account":
         return (
           <SettingsGroup>
+            <AccountInfoCard user={user} />
             <PasswordCard authRequired={authRequired} demoMode={demoMode} />
             {demoMode ? null : <LoginDevicesCard authRequired={authRequired} />}
             <SessionCard authRequired={authRequired} isLoggingOut={isLoggingOut} onLogout={onLogout} />
@@ -231,7 +290,13 @@ export const SettingsPane = ({
             </h1>
           </div>
         </div>
-        <ThemeToggle className="inline-flex" showLabel />
+        <div className="flex items-center gap-1">
+          <PluginToolbarMenu
+            host={pluginHost}
+            onManage={onOpenPluginMarketplace}
+          />
+          <ThemeToggle className="inline-flex" showLabel />
+        </div>
       </header>
 
       <div className="flex flex-1 min-h-0 min-w-0 bg-slate-50/50">
@@ -263,9 +328,9 @@ export const SettingsPane = ({
 
           {/* 右侧设置内容区 */}
           <main className="flex-1 min-w-0 overflow-y-auto pr-2">
-            <div className="grid gap-4">
+            <m.div key={activeTab} className="grid gap-4" {...contentEnterMotion}>
               {renderTabContent(activeTab)}
-            </div>
+            </m.div>
           </main>
         </div>
 
@@ -274,6 +339,34 @@ export const SettingsPane = ({
           {activeMobileTab === null ? (
             /* 分类主菜单 */
             <div className="grid gap-2">
+              <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white">
+                <button
+                  type="button"
+                  onClick={onOpenTemplates}
+                  className="flex w-full items-center justify-between gap-4 p-4 text-left transition-colors hover:bg-slate-50/50"
+                >
+                  <div className="flex items-center gap-3">
+                    <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-emerald-50/80">
+                      <LayoutTemplate className="h-4 w-4 text-emerald-600" />
+                    </div>
+                    <span className="text-sm font-semibold text-slate-800">{t("nav.templates")}</span>
+                  </div>
+                  <ChevronRight className="h-4 w-4 text-slate-400" />
+                </button>
+                <button
+                  type="button"
+                  onClick={onOpenAiPrompts}
+                  className="flex w-full items-center justify-between gap-4 border-t border-slate-100 p-4 text-left transition-colors hover:bg-slate-50/50"
+                >
+                  <div className="flex items-center gap-3">
+                    <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-emerald-50/80">
+                      <Sparkles className="h-4 w-4 text-emerald-600" />
+                    </div>
+                    <span className="text-sm font-semibold text-slate-800">{t("nav.prompts")}</span>
+                  </div>
+                  <ChevronRight className="h-4 w-4 text-slate-400" />
+                </button>
+              </div>
               <div className="divide-y divide-slate-100 overflow-hidden rounded-2xl border border-slate-200 bg-white">
                 {tabItems.map((item) => {
                   const Icon = item.icon;
@@ -295,18 +388,35 @@ export const SettingsPane = ({
                   );
                 })}
               </div>
-              <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white">
+              <div className="divide-y divide-slate-100 overflow-hidden rounded-2xl border border-slate-200 bg-white">
+                <button
+                  type="button"
+                  onClick={() => setSystemInfoOpen(true)}
+                  className="flex min-h-16 w-full items-center justify-between gap-3 px-4 py-2.5 text-left text-slate-600 transition-colors hover:bg-slate-200/50 hover:text-slate-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/70"
+                >
+                  <span className="flex min-w-0 items-center gap-3">
+                    <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-emerald-50/80">
+                      <Info className="h-4 w-4 text-emerald-600" />
+                    </span>
+                    <span className="min-w-0">
+                      <span className="block truncate text-sm font-semibold">{t("systemInfo.title")}</span>
+                      <span className="mt-0.5 block truncate text-xs text-slate-500">{t("systemInfo.description")}</span>
+                    </span>
+                  </span>
+                  <ChevronRight className="h-4 w-4 shrink-0 text-slate-400" />
+                </button>
                 <FeedbackLink />
               </div>
             </div>
           ) : (
             /* 详情页面 */
-            <div className="grid gap-4">
+            <m.div key={activeMobileTab} className="grid gap-4" {...contentEnterMotion}>
               {renderTabContent(activeMobileTab)}
-            </div>
+            </m.div>
           )}
         </div>
       </div>
+      <SystemInfoDialog open={systemInfoOpen} onOpenChange={setSystemInfoOpen} />
     </div>
   );
 };

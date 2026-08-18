@@ -2,11 +2,16 @@ import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { resolve, sep } from "node:path";
 import {
+  buildLocalDevEnvironmentFile,
   buildWranglerInvocation,
   buildWranglerEnvironment,
   buildWranglerSpawnOptions,
+  deployedWorkerSettings,
+  findD1DatabaseIdByName,
   isD1MigrationApplyCommand,
   normalizeD1MigrationSql,
+  productionVersionIds,
+  LOCAL_DEV_CREDENTIALS_ENCRYPTION_KEY,
   resolveWranglerCliPath,
   resolveWranglerRuntimeExecutable,
   runWranglerSync,
@@ -54,6 +59,69 @@ describe("cross-platform Wrangler runner", () => {
   test("normalizes Windows migration line endings for remote D1", () => {
     expect(normalizeD1MigrationSql("CREATE TABLE demo (id TEXT);\r\n\r\nSELECT 1;\r")).toBe(
       "CREATE TABLE demo (id TEXT);\n\nSELECT 1;\n",
+    );
+  });
+
+  test("gives local development an isolated credential encryption key", () => {
+    const envFile = buildLocalDevEnvironmentFile();
+
+    expect(LOCAL_DEV_CREDENTIALS_ENCRYPTION_KEY.length).toBeGreaterThanOrEqual(32);
+    expect(envFile).toContain(
+      `EDGE_EVER_CREDENTIALS_ENCRYPTION_KEY=${LOCAL_DEV_CREDENTIALS_ENCRYPTION_KEY}`,
+    );
+    expect(envFile).not.toContain("EDGE_EVER_AUTH_PASSWORD=");
+    expect(envFile).not.toContain("EDGE_EVER_AUTH_PASSWORD_HASH=");
+  });
+
+  test("resolves an exact D1 database name from Wrangler JSON", () => {
+    const databases = JSON.stringify([
+      { uuid: "11111111-1111-1111-1111-111111111111", name: "another-database" },
+      { uuid: "22222222-2222-2222-2222-222222222222", name: "edgeever" },
+    ]);
+
+    expect(findD1DatabaseIdByName(databases, "edgeever")).toBe(
+      "22222222-2222-2222-2222-222222222222",
+    );
+    expect(findD1DatabaseIdByName(databases, "EdgeEver")).toBeUndefined();
+    expect(findD1DatabaseIdByName("[]", "edgeever")).toBeUndefined();
+  });
+
+  test("rejects malformed D1 database list output", () => {
+    expect(() => findD1DatabaseIdByName("not-json", "edgeever")).toThrow(
+      "Wrangler returned invalid JSON",
+    );
+    expect(() => findD1DatabaseIdByName("{}", "edgeever")).toThrow(
+      "Wrangler returned an unexpected response",
+    );
+  });
+
+  test("reads active production versions and legacy deployment settings", () => {
+    expect(productionVersionIds(JSON.stringify({
+      versions: [
+        { version_id: "version-old", percentage: 10 },
+        { version_id: "version-current", percentage: 90 },
+        { version_id: "version-inactive", percentage: 0 },
+      ],
+    }))).toEqual(["version-current", "version-old"]);
+
+    expect(deployedWorkerSettings(JSON.stringify({
+      resources: {
+        bindings: [
+          { name: "RESOURCES", type: "r2_bucket", bucket_name: "my-old-edgeever-bucket" },
+          { name: "EDGE_EVER_AUTH_USERNAME", type: "plain_text", text: "owner" },
+        ],
+      },
+    }))).toEqual({
+      r2BucketName: "my-old-edgeever-bucket",
+      authUsername: "owner",
+    });
+  });
+
+  test("rejects malformed Worker deployment responses", () => {
+    expect(() => productionVersionIds("[]")).toThrow("unexpected response");
+    expect(() => deployedWorkerSettings("not-json")).toThrow("invalid JSON");
+    expect(() => deployedWorkerSettings(JSON.stringify({ resources: {} }))).toThrow(
+      "unexpected response",
     );
   });
 

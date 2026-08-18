@@ -1,0 +1,67 @@
+# Release Guide
+
+## Run a Release
+
+Run from a clean `main` branch on macOS that matches `origin/main`:
+
+```bash
+bun run release -- \
+  --bump patch \
+  --issue-title "Improve the release workflow" \
+  --label enhancement \
+  --change-en "Run required release checks in parallel." \
+  --change-zh "并行执行发布所需检查。" \
+  --change-commit "abcdef1"
+```
+
+Repeat `--change-en`, `--change-zh`, and `--change-commit` as matching groups.
+One change may cover multiple comma-separated commits:
+
+```bash
+--change-commit "abcdef1,1234567"
+```
+
+Every commit since the previous formal Release must be covered. Exclude a
+non-user-facing commit with a concrete reason:
+
+```bash
+--ignore-commit "89abcde:test-only coverage"
+```
+
+The coverage audit runs before any local or GitHub mutation. Its mapping is
+stored in the tracking Issue, not in the public Release notes. Public notes
+contain only user-visible changes, impact, and necessary migration guidance.
+
+Use `--dry-run` to inspect commit coverage, the native rebuild plan, and notes.
+Use `--skip-install` only when the published macOS application should not be
+installed and launched after the Release.
+
+## EdgeEver-Specific Behavior
+
+- Stable tags and Release titles use `vX.Y.Z`. Pass `--bump` explicitly and
+  follow SemVer; do not compress user-visible new capabilities or new platforms
+  into `patch` for release cadence (see `AGENTS.md`).
+- The root version identifies the product Release. Native marketing versions
+  change only when that native runtime is rebuilt. Android `versionCode` and
+  iOS build numbers remain independent, monotonically increasing identifiers.
+- A formal Release contains macOS arm64 and x64 DMGs, architecture-specific
+  updater ZIPs, and an Android arm64 APK. Unchanged native assets are reused
+  with their original filenames, versions, and checksums.
+- Desktop and Android update checks use the version embedded in the applicable
+  Release asset rather than the overall GitHub tag. This prevents a Web-only or
+  API-only Release from prompting an unnecessary native update.
+- The script creates the tracking Issue and Draft Release, validates or reuses
+  native assets, publishes, closes the Issue, and installs the matching DMG.
+  Demo deployment continues independently after its Actions URL is printed.
+- Mobile store delivery is not part of this command. See
+  [Mobile Store Delivery](store-delivery.md).
+
+## Failure and Resume
+
+- Validation or Draft asset failures leave the Release unpublished.
+- Rerunning the same command resumes a matching Draft created by an interrupted
+  run instead of creating another Issue, commit, or Release.
+- A failed post-publication native audit attempts to return the Release to
+  Draft and leaves the Issue open.
+- If application replacement fails, the script restores the previous app from
+  its macOS Trash backup when possible.

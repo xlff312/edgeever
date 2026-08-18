@@ -10,7 +10,8 @@ export type Pane = "notebooks" | "memos" | "editor";
 export type MemoView = "notebook" | "trash";
 export type MemoFilterMode = "all" | "tagged" | "untagged" | "pinned";
 export type MemoSortMode = "updated-desc" | "created-desc" | "title-asc";
-export type NotebookSortMode = "name-asc" | "memo-count-desc" | "updated-desc";
+export type NotebookSortMode = "custom" | "name-asc" | "memo-count-desc" | "updated-desc";
+export type EditorContentAlignment = "start" | "center";
 export type MemoListDensity = "preview" | "compact";
 export type ShortcutAction = "createMemo" | "createNotebook" | "focusSearch" | "focusReplace";
 export type ShortcutBinding = {
@@ -22,6 +23,13 @@ export type ShortcutBinding = {
 export type ShortcutSettings = Record<ShortcutAction, ShortcutBinding>;
 export type MobileBottomNavItem = "home" | "search" | "templates" | "settings";
 export type MemoContextMenuState = { memo: MemoSummary; x: number; y: number };
+export type MemoDocumentAction = "share" | "export-markdown" | "export-html" | "export-pdf" | "save-as-template";
+export type MemoDocumentActionRequest = {
+  id: number;
+  memoId: string;
+  action: MemoDocumentAction;
+  printWindow?: Window | null;
+};
 export type MemoSelectionContextMenuState = { x: number; y: number };
 export type NotebookContextMenuState = { notebook: NotebookNode; x: number; y: number };
 export type MemoDeleteConfirmation = { kind: "single" | "bulk"; memoIds: string[]; permanent: boolean };
@@ -31,52 +39,6 @@ export type NotebookNameDialogState =
   | { mode: "rename"; notebook: Notebook };
 
 export type AppNoticeDialogState = { title: string; description: string };
-
-export type MemoTemplate = {
-  id: string;
-  title: string;
-  description: string;
-  contentMarkdown: string;
-  tags: string[];
-};
-
-export const getMemoTemplates = (t: TFunction): MemoTemplate[] => [
-  {
-    id: "quick-note",
-    title: t("templates.items.quickNote.title"),
-    description: t("templates.items.quickNote.description"),
-    contentMarkdown: t("templates.items.quickNote.contentMarkdown"),
-    tags: ["template", "quick-note"],
-  },
-  {
-    id: "meeting",
-    title: t("templates.items.meeting.title"),
-    description: t("templates.items.meeting.description"),
-    contentMarkdown: t("templates.items.meeting.contentMarkdown"),
-    tags: ["template", "meeting"],
-  },
-  {
-    id: "checklist",
-    title: t("templates.items.checklist.title"),
-    description: t("templates.items.checklist.description"),
-    contentMarkdown: t("templates.items.checklist.contentMarkdown"),
-    tags: ["template", "checklist"],
-  },
-  {
-    id: "reading",
-    title: t("templates.items.reading.title"),
-    description: t("templates.items.reading.description"),
-    contentMarkdown: t("templates.items.reading.contentMarkdown"),
-    tags: ["template", "reading"],
-  },
-  {
-    id: "daily",
-    title: t("templates.items.daily.title"),
-    description: t("templates.items.daily.description"),
-    contentMarkdown: t("templates.items.daily.contentMarkdown"),
-    tags: ["template", "daily"],
-  },
-];
 
 export const isTextEntryTarget = (target: EventTarget | null) =>
   target instanceof HTMLElement &&
@@ -145,7 +107,10 @@ export { buildNotebookTree, type NotebookNode };
 export { DEFAULT_MEMO_TITLE };
 
 export const IMAGE_COMPRESSION_STORAGE_KEY = "edgeever.imageCompressionEnabled";
+export const SYNC_INTERVAL_STORAGE_KEY = "edgeever.syncInterval";
+const LEGACY_AUTO_SAVE_INTERVAL_STORAGE_KEY = "edgeever.autoSaveInterval";
 export const DESKTOP_FOCUS_MODE_STORAGE_KEY = "edgeever.desktopFocusMode";
+export const EDITOR_CONTENT_ALIGNMENT_STORAGE_KEY = "edgeever.editorContentAlignment";
 export const MEMO_LIST_DENSITY_STORAGE_KEY = "edgeever.memoListDensity";
 export const MEMO_LIST_WIDTH_STORAGE_KEY = "edgeever.memoListWidth";
 export const NOTEBOOK_SORT_STORAGE_KEY = "edgeever.notebookSort";
@@ -153,6 +118,19 @@ export const SHORTCUT_SETTINGS_STORAGE_KEY = "edgeever.shortcutSettings";
 export const DEFAULT_MEMO_LIST_WIDTH_PX = 360;
 export const MIN_MEMO_LIST_WIDTH_PX = 300;
 export const MAX_MEMO_LIST_WIDTH_PX = 540;
+export const EDITOR_LOCAL_SAVE_DELAY_MS = 1_200;
+
+export type SyncIntervalPreference = "30s" | "5m" | "15m" | "30m" | "1h" | "2h" | "off";
+export const DEFAULT_SYNC_INTERVAL_MS = 30_000;
+const SYNC_INTERVAL_VALUES: Record<SyncIntervalPreference, number | null> = {
+  "30s": 30_000,
+  "5m": 300_000,
+  "15m": 900_000,
+  "30m": 1_800_000,
+  "1h": 3_600_000,
+  "2h": 7_200_000,
+  off: null,
+};
 
 export const MEMO_DRAG_MIME = "application/x-edgeever-memos";
 export const NOTEBOOK_DRAG_MIME = "application/x-edgeever-notebook";
@@ -163,9 +141,10 @@ export const getMemoSortOptions = (t: TFunction): Array<{ value: MemoSortMode; l
   { value: "title-asc", label: t("options.memoSort.titleAsc") },
 ];
 
-const NOTEBOOK_SORT_VALUES: NotebookSortMode[] = ["name-asc", "memo-count-desc", "updated-desc"];
+const NOTEBOOK_SORT_VALUES: NotebookSortMode[] = ["custom", "name-asc", "memo-count-desc", "updated-desc"];
 
 export const getNotebookSortOptions = (t: TFunction): Array<{ value: NotebookSortMode; label: string }> => [
+  { value: "custom", label: t("options.notebookSort.custom") },
   { value: "name-asc", label: t("options.notebookSort.nameAsc") },
   { value: "memo-count-desc", label: t("options.notebookSort.memoCountDesc") },
   { value: "updated-desc", label: t("options.notebookSort.updatedDesc") },
@@ -260,6 +239,29 @@ export const writeImageCompressionPreference = (enabled: boolean) => {
   }
 };
 
+export const readSyncIntervalPreference = (): number | null => {
+  try {
+    const stored = (
+      window.localStorage.getItem(SYNC_INTERVAL_STORAGE_KEY)
+      ?? window.localStorage.getItem(LEGACY_AUTO_SAVE_INTERVAL_STORAGE_KEY)
+    );
+    const preference = stored === "1m" ? "30s" : stored;
+    return preference && preference in SYNC_INTERVAL_VALUES
+      ? SYNC_INTERVAL_VALUES[preference as SyncIntervalPreference]
+      : DEFAULT_SYNC_INTERVAL_MS;
+  } catch {
+    return DEFAULT_SYNC_INTERVAL_MS;
+  }
+};
+
+export const writeSyncIntervalPreference = (preference: SyncIntervalPreference) => {
+  try {
+    window.localStorage.setItem(SYNC_INTERVAL_STORAGE_KEY, preference);
+  } catch {
+    // Local storage can be unavailable in private or restricted browser contexts.
+  }
+};
+
 export const readDesktopFocusModePreference = () => {
   try {
     return window.localStorage.getItem(DESKTOP_FOCUS_MODE_STORAGE_KEY) === "true";
@@ -271,6 +273,22 @@ export const readDesktopFocusModePreference = () => {
 export const writeDesktopFocusModePreference = (enabled: boolean) => {
   try {
     window.localStorage.setItem(DESKTOP_FOCUS_MODE_STORAGE_KEY, enabled ? "true" : "false");
+  } catch {
+    // Local storage can be unavailable in private or restricted browser contexts.
+  }
+};
+
+export const readEditorContentAlignmentPreference = (): EditorContentAlignment => {
+  try {
+    return window.localStorage.getItem(EDITOR_CONTENT_ALIGNMENT_STORAGE_KEY) === "center" ? "center" : "start";
+  } catch {
+    return "start";
+  }
+};
+
+export const writeEditorContentAlignmentPreference = (alignment: EditorContentAlignment) => {
+  try {
+    window.localStorage.setItem(EDITOR_CONTENT_ALIGNMENT_STORAGE_KEY, alignment);
   } catch {
     // Local storage can be unavailable in private or restricted browser contexts.
   }
@@ -458,6 +476,10 @@ const compareNotebookUpdatedDesc = (first: Notebook, second: Notebook) => {
 };
 
 export const getNotebookSortComparator = (sortMode: NotebookSortMode): NotebookNodeComparator => {
+  if (sortMode === "custom") {
+    return (first, second) => first.sortOrder - second.sortOrder || compareNotebookNameAsc(first, second);
+  }
+
   if (sortMode === "memo-count-desc") {
     return (first, second) => second.memoCount - first.memoCount || compareNotebookNameAsc(first, second);
   }
