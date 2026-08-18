@@ -101,7 +101,8 @@ jobs:
 
       - name: Publish update
         if: steps.upstream.outputs.update_required == 'true'
-        env:/n          SYNC_PAT: ${{ secrets.SYNC_PAT }}
+        env:
+          SYNC_PAT: ${{ secrets.SYNC_PAT }}
         run: |
           git remote set-url origin "https://x-access-token:${SYNC_PAT}@github.com/xlff312/edgeever.git"
           git push origin HEAD:main
