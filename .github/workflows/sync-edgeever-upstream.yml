@@ -315,6 +315,7 @@ jobs:
         run: |
           set -euo pipefail
           bun install --frozen-lockfile
+          bun run build:cloudflare
           EDGE_EVER_USE_EXISTING_AUTH_SECRET=true bun run deploy:ci
           echo "method=wrangler_direct" >> "${GITHUB_OUTPUT}"
           echo "" >> "${GITHUB_STEP_SUMMARY}"
