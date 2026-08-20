@@ -299,24 +299,26 @@ jobs:
           echo "mode=${ALIGN_MODE}_commit" >> "${GITHUB_OUTPUT}"
           echo "Published ${ALIGN_MODE} update for ${TARGET_REF} without changing downstream workflows."
 
-      - name: Request Cloudflare deployment
+      - name: Set up Bun
+        if: steps.publish.outcome == 'success'
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Deploy to Cloudflare via Wrangler
         id: deploy
         if: steps.publish.outcome == 'success'
         env:
-          DEPLOY_HOOK_URL: ${{ secrets.EDGE_EVER_CLOUDFLARE_DEPLOY_HOOK_URL }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID || '8a7d18af9f1504f826525b343cee3ab9' }}
+          EDGE_EVER_DEPLOYMENT_URL: ${{ vars.EDGE_EVER_DEPLOYMENT_URL || 'https://edgeever.qmf.dpdns.org' }}
         run: |
           set -euo pipefail
-          if [ -z "${DEPLOY_HOOK_URL:-}" ]; then
-            echo "No EDGE_EVER_CLOUDFLARE_DEPLOY_HOOK_URL secret — relying on Cloudflare Git integration for main pushes."
-            echo "Optional: add a Workers/Pages Deploy Hook secret if pushes do not start builds." >> "${GITHUB_STEP_SUMMARY}"
-            echo "method=git_push" >> "${GITHUB_OUTPUT}"
-            exit 0
-          fi
-          curl -fsS -X POST "${DEPLOY_HOOK_URL}" >/dev/null
-          echo "Triggered Cloudflare Deploy Hook."
-          echo "method=git_push_and_deploy_hook" >> "${GITHUB_OUTPUT}"
+          bun install --frozen-lockfile
+          EDGE_EVER_USE_EXISTING_AUTH_SECRET=true bun run deploy:ci
+          echo "method=wrangler_direct" >> "${GITHUB_OUTPUT}"
           echo "" >> "${GITHUB_STEP_SUMMARY}"
-          echo "Triggered optional Cloudflare Deploy Hook after publish." >> "${GITHUB_STEP_SUMMARY}"
+          echo "Deployed EdgeEver to Cloudflare via Wrangler (bypassing Workers Builds)." >> "${GITHUB_STEP_SUMMARY}"
 
       - name: Report result / 输出结果
         if: always() && steps.upstream.outcome == 'success'
@@ -366,6 +368,9 @@ jobs:
                 case "${DEPLOY_TRIGGER_METHOD}" in
                   git_push_and_deploy_hook)
                     deploy_result="Requested by Git push and Deploy Hook / 已通过 Git push 和 Deploy Hook 请求"
+                    ;;
+                  wrangler_direct)
+                    deploy_result="Deployed by Wrangler in this workflow / 已由本工作流 Wrangler 直接部署"
                     ;;
                   *)
                     deploy_result="Requested by Git push / 已通过 Git push 请求"
